@@ -9,6 +9,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 
+import ipywidgets as widgets
+from IPython.display import display
+import pandas as pd
+
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 plt.rcParams["font.family"] = "serif"
 
@@ -79,3 +83,89 @@ def plot_rolling_correlation_pair(rolling_corr_series, pair_label, highlight_per
     plt.savefig(out_path, dpi=150)
     print(f"Saved rolling correlation plot to {out_path}")
     plt.show()
+
+
+RANGE_OPTIONS = {
+    "6M": 126,
+    "1Y": 252,
+    "3Y": 756,
+    "5Y": 1260,
+    "All": None,
+}
+
+
+def filter_by_range(series, range_label):
+    if range_label == "All" or RANGE_OPTIONS[range_label] is None:
+        return series
+    n_days = RANGE_OPTIONS[range_label]
+    return series.tail(n_days)
+
+
+def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
+    """
+    Interactive dashboard: pick any two assets via dropdowns (Asset B
+    excludes whatever is selected in Asset A) and a time range, and
+    plot their rolling correlation over that window.
+    """
+    all_tickers = list(returns.columns)
+    label_map = ticker_labels or {t: t for t in all_tickers}
+
+    def display_name(ticker):
+        return f"{ticker} ({label_map[ticker]})" if ticker in label_map else ticker
+
+    display_to_ticker = {display_name(t): t for t in all_tickers}
+
+    asset_a_dropdown = widgets.Dropdown(
+        options=[display_name(t) for t in all_tickers],
+        value=display_name(all_tickers[0]),
+        description="Asset A:",
+    )
+    asset_b_dropdown = widgets.Dropdown(
+        options=[display_name(t) for t in all_tickers if t != all_tickers[0]],
+        value=display_name(all_tickers[1]),
+        description="Asset B:",
+    )
+    range_dropdown = widgets.Dropdown(
+        options=list(RANGE_OPTIONS.keys()), value="1Y", description="Range:"
+    )
+
+    controls = widgets.HBox([asset_a_dropdown, asset_b_dropdown, range_dropdown])
+    output = widgets.Output()
+
+    def update_asset_b_options(change=None):
+        """Prevent Asset B from offering the same ticker as Asset A."""
+        selected_a = display_to_ticker[asset_a_dropdown.value]
+        available = [display_name(t) for t in all_tickers if t != selected_a]
+
+        current_b = asset_b_dropdown.value
+        asset_b_dropdown.options = available
+        # If Asset B's current value is now invalid (matched A), reset it
+        if current_b not in available:
+            asset_b_dropdown.value = available[0]
+
+    def redraw(change=None):
+        output.clear_output(wait=True)
+        ticker_a = display_to_ticker[asset_a_dropdown.value]
+        ticker_b = display_to_ticker[asset_b_dropdown.value]
+
+        corr_series = returns[ticker_a].rolling(window).corr(returns[ticker_b])
+        corr_series = filter_by_range(corr_series.dropna(), range_dropdown.value)
+
+        with output:
+            fig, ax = plt.subplots(figsize=(11, 5))
+            ax.plot(corr_series.index, corr_series.values, color="black", linewidth=2.0)
+            ax.axhline(0, color="grey", linestyle="--", linewidth=0.8)
+            ax.set_title(f"Rolling {window}-Day Correlation: {asset_a_dropdown.value} vs {asset_b_dropdown.value}")
+            ax.set_ylabel("Correlation")
+            ax.set_ylim(-1, 1)
+            ax.grid(alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
+    asset_a_dropdown.observe(update_asset_b_options, names="value")
+    asset_a_dropdown.observe(redraw, names="value")
+    asset_b_dropdown.observe(redraw, names="value")
+    range_dropdown.observe(redraw, names="value")
+
+    display(controls, output)
+    redraw()
