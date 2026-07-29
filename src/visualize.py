@@ -13,6 +13,8 @@ import ipywidgets as widgets
 from IPython.display import display
 import pandas as pd
 
+import numpy as np
+
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 plt.rcParams["font.family"] = "serif"
 
@@ -166,6 +168,69 @@ def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
     asset_a_dropdown.observe(redraw, names="value")
     asset_b_dropdown.observe(redraw, names="value")
     range_dropdown.observe(redraw, names="value")
+
+    display(controls, output)
+    redraw()
+
+def build_interactive_heatmap_dashboard(returns, ticker_labels=None):
+    """
+    Interactive dashboard: pick a year and month via dropdowns, and
+    the correlation heatmap updates to show that month's correlation
+    structure across the asset basket.
+    """
+    label_map = ticker_labels or {t: t for t in returns.columns}
+    labels = [label_map.get(t, t) for t in returns.columns]
+
+    available_years = sorted(returns.index.year.unique())
+    month_names = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December"
+    }
+
+    year_dropdown = widgets.Dropdown(
+        options=available_years,
+        value=available_years[-1],
+        description="Year:",
+    )
+    month_dropdown = widgets.Dropdown(
+        options=[(name, num) for num, name in month_names.items()],
+        value=1,
+        description="Month:",
+    )
+
+    controls = widgets.HBox([year_dropdown, month_dropdown])
+    output = widgets.Output()
+
+    def redraw(change=None):
+        output.clear_output(wait=True)
+        year = year_dropdown.value
+        month = month_dropdown.value
+
+        month_data = returns[(returns.index.year == year) & (returns.index.month == month)]
+
+        with output:
+            if month_data.empty or len(month_data) < 2:
+                print(f"No data available for {month_names[month]} {year}.")
+                return
+
+            corr_matrix = month_data.corr()
+            mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+
+
+            fig, ax = plt.subplots(figsize=(8, 7))
+            sns.heatmap(
+                corr_matrix, mask=mask, annot=True, fmt=".2f", cmap="RdBu_r",
+                center=0, vmin=-1, vmax=1, ax=ax,
+                xticklabels=labels, yticklabels=labels,
+                linewidths=0.5
+            )
+            ax.set_title(f"Correlation Matrix — {month_names[month]} {year}", fontsize=13)
+            plt.tight_layout()
+            plt.show()
+
+    year_dropdown.observe(redraw, names="value")
+    month_dropdown.observe(redraw, names="value")
 
     display(controls, output)
     redraw()
