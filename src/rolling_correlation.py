@@ -1,31 +1,33 @@
 """
 rolling_correlation.py
-Computes rolling correlation matrices over time, and extracts
-correlation snapshots for defined market stress periods.
+Pure calculation module for rolling and static correlation analysis
+across any asset pair or universe. No plotting, no hardcoded periods --
+visualize.py (or any caller) decides what timeframe/assets to slice.
 """
 
 import pandas as pd
 
-# Defined stress/calm periods for comparison snapshots
-STRESS_PERIODS = {
-    "Pre-COVID Calm (2019)": ("2019-01-01", "2019-12-31"),
-    "COVID Crash (Feb-Apr 2020)": ("2020-02-15", "2020-04-15"),
-    "2022 Rate Shock": ("2022-01-01", "2022-12-31"),
-    "Recent (Last 6M)": None,  # filled dynamically based on latest data
-}
 
-
-def compute_rolling_correlation(returns, pair_a, pair_b, window=60):
+def compute_rolling_correlation(
+    returns: pd.DataFrame,
+    asset_a: str,
+    asset_b: str,
+    window: int = 60,
+) -> pd.Series:
     """
-    Compute rolling correlation between two specific assets over time.
+    Rolling pairwise correlation between two assets over time.
     Returns a Series indexed by date.
     """
-    return returns[pair_a].rolling(window).corr(returns[pair_b])
+    return returns[asset_a].rolling(window).corr(returns[asset_b])
 
 
-def compute_correlation_matrix(returns, start=None, end=None):
+def compute_correlation_matrix(
+    returns: pd.DataFrame,
+    start: str | None = None,
+    end: str | None = None,
+) -> pd.DataFrame:
     """
-    Compute a static correlation matrix over a given date range
+    Static correlation matrix over a given date range
     (or the full dataset if no range is given).
     """
     data = returns
@@ -34,34 +36,17 @@ def compute_correlation_matrix(returns, start=None, end=None):
     return data.corr()
 
 
-def get_period_snapshots(returns, periods=STRESS_PERIODS):
+def compute_rolling_correlation_matrix_series(
+    returns: pd.DataFrame,
+    window: int = 60,
+) -> dict[pd.Timestamp, pd.DataFrame]:
     """
-    Returns a dict of {period_name: correlation_matrix} for each
-    defined stress period.
-    """
-    snapshots = {}
-    for name, date_range in periods.items():
-        if date_range is None:
-            # "Recent" period: last 6 months of available data
-            end_date = returns.index.max()
-            start_date = end_date - pd.DateOffset(months=6)
-            snapshots[name] = compute_correlation_matrix(returns, start_date, end_date)
-        else:
-            start, end = date_range
-            subset = returns.loc[start:end]
-            if subset.empty:
-                continue
-            snapshots[name] = compute_correlation_matrix(returns, start, end)
-    return snapshots
-
-
-def compute_rolling_correlation_matrix_series(returns, window=60):
-    """
-    Computes the full rolling correlation matrix for every date,
-    returned as a dict of {date: correlation_matrix} for the last
-    N dates (useful for animation/slider views).
-    Note: this can be expensive for long histories/many assets,
-    so it's typically called on a trimmed date range.
+    Full rolling correlation matrix for every date in the series,
+    returned as {date: correlation_matrix}. Useful for animation/slider
+    views in visualize.py.
+    Note: this is O(n) correlation-matrix computations, each O(assets^2) --
+    expensive for long histories or wide universes. Callers should trim
+    the date range or asset set before calling this on the full S&P universe.
     """
     dates = returns.index[window:]
     matrices = {}
