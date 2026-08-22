@@ -69,11 +69,13 @@ def plot_rolling_correlation_pair(returns, ticker_a, ticker_b, window=60, pair_l
     plt.show()
 
 
-def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
+def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60, ma_window=126):
     """
     Interactive dashboard: pick Asset A and Asset B side by side (B excludes
-    whatever's selected in A) and a timeframe, and plot their rolling
-    correlation over that window.
+    whatever's selected in A), a timeframe, and plot their rolling
+    correlation over that window. A checkbox toggles a long-run moving
+    average of the correlation series on/off, so you can see how current
+    correlation stacks up against its own trend.
     """
     all_tickers = list(returns.columns)
     label_map = ticker_labels or {t: t for t in all_tickers}
@@ -92,15 +94,16 @@ def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
     range_dropdown = widgets.Dropdown(
         options=list(RANGE_OPTIONS.keys()), value="1Y", description="Range:"
     )
+    show_ma_checkbox = widgets.Checkbox(
+        value=False, description=f"Show {ma_window}-day MA of correlation"
+    )
 
-    controls = widgets.HBox([asset_a_dropdown, asset_b_dropdown, range_dropdown])
+    controls = widgets.HBox([asset_a_dropdown, asset_b_dropdown, range_dropdown, show_ma_checkbox])
     output = widgets.Output()
 
     def update_asset_b_options(change=None):
-        """Prevent Asset B from offering the same ticker as Asset A."""
         selected_a = display_to_ticker[asset_a_dropdown.value]
         available = [_display_name(t, label_map) for t in all_tickers if t != selected_a]
-
         current_b = asset_b_dropdown.value
         asset_b_dropdown.options = available
         if current_b not in available:
@@ -111,13 +114,27 @@ def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
         ticker_a = display_to_ticker[asset_a_dropdown.value]
         ticker_b = display_to_ticker[asset_b_dropdown.value]
 
-        corr_series = returns[ticker_a].rolling(window).corr(returns[ticker_b]).dropna()
-        corr_series = _filter_by_range(corr_series, range_dropdown.value)
+        # Compute the MA on the FULL correlation history before trimming to
+        # the display range, so the average isn't distorted by truncation
+        # at the start of the visible window.
+        full_corr = returns[ticker_a].rolling(window).corr(returns[ticker_b]).dropna()
+        corr_ma = full_corr.rolling(ma_window).mean()
+
+        corr_series = _filter_by_range(full_corr, range_dropdown.value)
+        corr_ma_display = _filter_by_range(corr_ma, range_dropdown.value)
 
         with output:
             fig, ax = plt.subplots(figsize=(11, 5))
-            ax.plot(corr_series.index, corr_series.values, color="black", linewidth=2.0)
+            ax.plot(corr_series.index, corr_series.values, color="black", linewidth=2.0,
+                    label=f"{window}-day rolling correlation")
             ax.axhline(0, color="grey", linestyle="--", linewidth=0.8)
+
+            if show_ma_checkbox.value:
+                ax.plot(corr_ma_display.index, corr_ma_display.values,
+                        color="#c0392b", linewidth=1.6, linestyle="--",
+                        label=f"{ma_window}-day MA of correlation")
+                ax.legend(loc="upper left", fontsize=9)
+
             ax.set_title(
                 f"Rolling {window}-Day Correlation: "
                 f"{asset_a_dropdown.value} vs {asset_b_dropdown.value}"
@@ -132,67 +149,7 @@ def build_pair_correlation_dashboard(returns, ticker_labels=None, window=60):
     asset_a_dropdown.observe(redraw, names="value")
     asset_b_dropdown.observe(redraw, names="value")
     range_dropdown.observe(redraw, names="value")
-
-    display(controls, output)
-    redraw()
-
-
-def build_correlation_matrix_dashboard(returns, ticker_labels=None):
-    """
-    Interactive dashboard: pick any subset of assets (multi-select) and a
-    timeframe, and see the correlation heatmap for that selection over
-    that window. Replaces the old fixed year/month picker with free
-    asset + range selection.
-    """
-    all_tickers = list(returns.columns)
-    label_map = ticker_labels or {t: t for t in all_tickers}
-    display_to_ticker = {_display_name(t, label_map): t for t in all_tickers}
-    all_display_names = [_display_name(t, label_map) for t in all_tickers]
-
-    asset_select = widgets.SelectMultiple(
-        options=all_display_names,
-        value=tuple(all_display_names),  # default: everything selected
-        description="Assets:",
-        rows=min(len(all_display_names), 10),
-    )
-    range_dropdown = widgets.Dropdown(
-        options=list(RANGE_OPTIONS.keys()), value="1Y", description="Range:"
-    )
-
-    controls = widgets.VBox([asset_select, range_dropdown])
-    output = widgets.Output()
-
-    def redraw(change=None):
-        output.clear_output(wait=True)
-
-        selected_tickers = [display_to_ticker[name] for name in asset_select.value]
-        if len(selected_tickers) < 2:
-            with output:
-                print("Select at least two assets to compute a correlation matrix.")
-            return
-
-        subset = returns[selected_tickers]
-        subset = _filter_by_range(subset, range_dropdown.value)
-
-        corr_matrix = compute_correlation_matrix(subset)
-        labels = [label_map.get(t, t) for t in corr_matrix.columns]
-        mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
-
-        with output:
-            fig_size = max(6, len(selected_tickers) * 0.8)
-            fig, ax = plt.subplots(figsize=(fig_size, fig_size * 0.9))
-            sns.heatmap(
-                corr_matrix, mask=mask, annot=True, fmt=".2f", cmap="RdBu_r",
-                center=0, vmin=-1, vmax=1, ax=ax,
-                xticklabels=labels, yticklabels=labels,
-                linewidths=0.5,
-            )
-            ax.set_title(f"Correlation Matrix — {range_dropdown.value}", fontsize=13)
-            plt.tight_layout()
-            plt.show()
-
-    asset_select.observe(redraw, names="value")
-    range_dropdown.observe(redraw, names="value")
+    show_ma_checkbox.observe(redraw, names="value")
 
     display(controls, output)
     redraw()
